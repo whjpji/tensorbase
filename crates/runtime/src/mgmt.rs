@@ -209,41 +209,23 @@ impl<'a> BaseMgmtSys<'a> {
         log::info!("current timezone sets to {}", timezone_name);
 
         //prepare two system level databases
-        let res = meta_store.new_db("system");
-        match res {
-            Ok(tid) => {
-                //numbers
-                let cmd = "CREATE TABLE system.numbers
-                (
-                    number Int64
-                )
-                ENGINE = BaseStorage
-                ";
-                let p = BaseMgmtSys::parse_cmd_as_pair(cmd)?;
-                let (mut t, _fallible) = parse_create_table(p)
-                    .map_err(|e| BaseRtError::WrappingLangError(e))?;
-                t.tab_info.create_script = cmd.to_string();
-                let res = meta_store.create_table(&t);
-                match res {
-                    Err(e) => {
-                        return Err(BaseRtError::WrappingMetaError(e));
-                    }
-                    _ => log::info!("database `system` created"), //[dbid={}]
-                }
-            }
-            Err(MetaError::EntityExistedError(tid)) => {
-                log::info!("database `system` existed") //[dbid={}]
-            }
-            Err(e) => return Err(BaseRtError::WrappingMetaError(e)),
-        }
-        let res = meta_store.new_db("default");
-        match res {
-            Ok(tid) => log::info!("database `default` created"), //[dbid={}]
-            Err(MetaError::EntityExistedError(tid)) => {
-                log::info!("database `default` existed") //[dbid={}]
-            }
-            Err(e) => return Err(BaseRtError::WrappingMetaError(e)),
-        }
+        prepare_system_level_database(&meta_store, "system")?;
+        prepare_system_level_table(
+            &meta_store,
+            "system",
+            "numbers",
+            "CREATE TABLE system.numbers ( number Int64 ) ENGINE = BaseStorage",
+        )?;
+        prepare_system_level_table(
+            &meta_store,
+            "system",
+            "timezone",
+            "CREATE TABLE system.timezone ( \
+                name FixedString(32), \
+                offset Int32 \
+            ) ENGINE = BaseStorage",
+        )?;
+        prepare_system_level_database(&meta_store, "default")?;
         let jit = jit::JIT::default();
         let ptk_exprs_reg =
             DashMap::<Id, SyncPointer<u8>, BuildPtkExprsHasher>::with_hasher(
@@ -872,6 +854,45 @@ impl<'a> BaseMgmtSys<'a> {
             }
             _ => return Err(BaseRtError::UnsupportedCommand),
         }
+    }
+}
+
+fn prepare_system_level_database(
+    meta_store: &MetaStore,
+    database: &str,
+) -> BaseRtResult<Id> {
+    match meta_store.new_db(database) {
+        Ok(dbid) => {
+            log::info!("database `{}` created", database); // [dbid={}]
+            Ok(dbid)
+        }
+        Err(MetaError::EntityExistedError(dbid)) => {
+            log::info!("database `{}` existed", database); // [dbid={}]
+            Ok(dbid)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn prepare_system_level_table(
+    meta_store: &MetaStore,
+    database: &str,
+    table: &str,
+    cmd: &str,
+) -> BaseRtResult<Id> {
+    let p = BaseMgmtSys::parse_cmd_as_pair(cmd)?;
+    let (mut t, _fallible) = parse_create_table(p)?;
+    t.tab_info.create_script = cmd.to_string();
+    match meta_store.create_table(&t) {
+        Ok(tid) => {
+            log::info!("table `{}.{}` created", database, table);
+            Ok(tid)
+        }
+        Err(MetaError::EntityExistedError(tid)) => {
+            log::info!("table `{}.`{}` existed", database, table);
+            Ok(tid)
+        }
+        Err(e) => Err(e.into()),
     }
 }
 
